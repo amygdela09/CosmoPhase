@@ -69,12 +69,12 @@
                     REAL-TIME
                 </button>
                 <div class="flex items-center gap-4">
-                    <button id="timelapse-btn" class="bg-black hover:bg-green-900 border border-green-500 text-green-400 font-bold py-1 px-3 rounded-none transition-colors duration-300">
-                        START TIMELAPSE
+                    <button id="timelapse-btn" class="bg-green-900 hover:bg-green-900 border border-green-500 text-green-400 font-bold py-1 px-3 rounded-none transition-colors duration-300">
+                        STOP TIMELAPSE
                     </button>
                     <div class="flex items-center gap-2">
                          <label for="timelapse-speed">SPEED:</label>
-                         <input type="range" id="timelapse-speed" min="-20" max="50" value="10" class="w-24">
+                         <input type="range" id="timelapse-speed" min="-20" max="50" value="-20" class="w-24">
                     </div>
                 </div>
             </div>
@@ -125,14 +125,15 @@
         const moonDisplayGroup = document.getElementById('moon-phase-display-group');
 
         // --- Global State ---
-        let isRealTime = true;
-        let isTimelapseRunning = false;
-        let timelapseSpeed = 2; // Initial speed (2^(10/10) = 2)
+        let isRealTime = false;
+        let isTimelapseRunning = true;
+        let timelapseSpeed = Math.pow(2, -20 / 10); // Initial speed from slider's min value
         let currentDate = new Date();
         let planets = [];
         let scene, camera, renderer, raycaster, mouse;
         let zoom = 1.0; // Initial zoom level
         const LOG_SCALE_FACTOR = 20;
+        let alignmentFlash = { sprites: [], expiry: 0 }; // For alignment visual effect
 
         // --- Astronomical Constants & Data (J2000 epoch) ---
         const bodies = [
@@ -164,6 +165,7 @@
 
         const sunTexture = createDotTexture(32, '#ffcc00');
         const planetTexture = createDotTexture(32, '#00ff00');
+        const planetRedTexture = createDotTexture(32, '#ff0000');
 
         function init() {
             scene = new THREE.Scene();
@@ -195,7 +197,7 @@
                 const isStar = bodyData.isStar;
                 const material = new THREE.SpriteMaterial({
                     map: isStar ? sunTexture : planetTexture,
-                    color: isStar ? 0xffcc00 : 0x00ff00,
+                    color: isStar ? bodyData.color : 0x00ff00, // Use green for planets
                     transparent: true,
                     blending: THREE.AdditiveBlending,
                     sizeAttenuation: false
@@ -217,15 +219,11 @@
             });
         }
         
-        /**
-         * Creates an accurate elliptical orbit by calculating points along the path.
-         * This ensures the planet's position perfectly matches the drawn orbit.
-         */
         function createOrbit(bodyData) {
             const points = [];
             const numPoints = 256;
             for (let i = 0; i <= numPoints; i++) {
-                const M = (i / numPoints) * 2 * Math.PI; // Mean anomaly from 0 to 2PI
+                const M = (i / numPoints) * 2 * Math.PI;
                 const pos = getPositionOnOrbit(bodyData, M);
                 points.push(pos);
             }
@@ -238,52 +236,31 @@
             return ellipse;
         }
 
-        /**
-         * Helper function to get a single position on an orbit for a given Mean Anomaly.
-         * Used by both createOrbit and calculatePosition.
-         */
         function getPositionOnOrbit(bodyData, M_rad) {
             const { a, e, w } = bodyData;
             const w_rad = w * (Math.PI / 180);
-
-            // Solve Kepler's Equation for Eccentric Anomaly (E)
             let E = M_rad;
-            for (let i = 0; i < 7; i++) {
-                E = M_rad + e * Math.sin(E);
-            }
-
-            // Get scaled radii for drawing
+            for (let i = 0; i < 7; i++) { E = M_rad + e * Math.sin(E); }
             const a_scaled = Math.log10(a + 1) * LOG_SCALE_FACTOR;
             const b_scaled = a_scaled * Math.sqrt(1 - e * e);
             const c_scaled = a_scaled * e;
-
-            // Calculate coordinates on a non-rotated ellipse with sun at origin
             const x_unrotated = a_scaled * Math.cos(E) - c_scaled;
             const z_unrotated = b_scaled * Math.sin(E);
-
-            // Rotate these coordinates by the longitude of perihelion (w)
             const x = x_unrotated * Math.cos(w_rad) - z_unrotated * Math.sin(w_rad);
             const z = x_unrotated * Math.sin(w_rad) + z_unrotated * Math.cos(w_rad);
-
-            // Return the 3D vector for the XZ plane.
             return new THREE.Vector3(x, 0, z);
         }
-
 
         // --- Main Loop and Calculations ---
         function calculatePosition(bodyData, date) {
             if (bodyData.isStar) return new THREE.Vector3(0, 0, 0);
-
             const { a, L, w } = bodyData;
-
-            // Calculate Mean Anomaly (M) for the given date
             const d = (date - new Date('2000-01-01T12:00:00Z')) / (1000 * 60 * 60 * 24);
             const n_deg_per_day = 360 / ((a ** 1.5) * 365.25);
             const M0_deg = L - w;
             const M_deg = (M0_deg + n_deg_per_day * d) % 360;
             let M = M_deg * (Math.PI / 180);
             M = M < 0 ? M + 2 * Math.PI : M;
-
             return getPositionOnOrbit(bodyData, M);
         }
 
@@ -297,43 +274,94 @@
 
         function updateMoonPhaseDisplay(date) {
             const phase = calculateMoonPhase(date);
-            moonDisplayGroup.innerHTML = ''; // Clear previous frame
-        
-            const r = 38; // radius
-            const cx = 40; // center x
-            const cy = 40; // center y
-        
+            moonDisplayGroup.innerHTML = '';
+            const r = 38, cx = 40, cy = 40;
             const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
-            let d;
-        
             const x_radius = r * Math.cos(phase * 2 * Math.PI);
-        
-            if (phase < 0.5) { // Waxing (light on right)
-                // Draw right half-circle, then the terminator ellipse
+            let d;
+            if (phase < 0.5) {
                 d = `M ${cx},${cy - r} A ${r},${r} 0 0 1 ${cx},${cy + r} A ${Math.abs(x_radius)},${r} 0 0 0 ${cx},${cy - r}`;
-            } else { // Waning (light on left)
-                // Draw left half-circle, then the terminator ellipse
+            } else {
                 d = `M ${cx},${cy - r} A ${r},${r} 0 0 0 ${cx},${cy + r} A ${Math.abs(x_radius)},${r} 0 0 1 ${cx},${cy - r}`;
             }
-        
             path.setAttribute('d', d + ' Z');
             moonDisplayGroup.appendChild(path);
         }
+        
+        /**
+         * Robust alignment check for planets.
+         */
+        function checkForAlignments() {
+            const TOLERANCE = 2.5; // degrees
+            const MIN_PLANETS = 3;
+        
+            const planetAngles = planets
+                .filter(p => !p.data.isStar)
+                .map(p => {
+                    const pos = p.sprite.position;
+                    let angle = Math.atan2(pos.z, pos.x) * (180 / Math.PI);
+                    return { angle: (angle + 360) % 360, sprite: p.sprite }; // Normalize to 0-360
+                });
+        
+            if (planetAngles.length < MIN_PLANETS) return [];
+        
+            planetAngles.sort((a, b) => a.angle - b.angle);
+        
+            const wrappedAngles = [...planetAngles, ...planetAngles.map(p => ({ ...p, angle: p.angle + 360 }))];
+            
+            let bestGroup = [];
+        
+            for (let i = 0; i < planetAngles.length; i++) {
+                const currentGroup = [wrappedAngles[i]];
+                for (let j = i + 1; j < wrappedAngles.length; j++) {
+                    if (wrappedAngles[j].angle - wrappedAngles[i].angle <= TOLERANCE) {
+                        currentGroup.push(wrappedAngles[j]);
+                    } else {
+                        break;
+                    }
+                }
+        
+                if (currentGroup.length > bestGroup.length) {
+                    bestGroup = currentGroup;
+                }
+            }
+        
+            if (bestGroup.length >= MIN_PLANETS) {
+                return bestGroup.map(item => item.sprite); // Return only the sprites
+            }
+        
+            return [];
+        }
+
 
         function animate() {
             requestAnimationFrame(animate);
-
             updateDate();
             updateMoonPhaseDisplay(currentDate);
 
+            // Alignment Detection
+            const currentlyAlignedSprites = checkForAlignments();
+            if (currentlyAlignedSprites.length > 0) {
+                alignmentFlash.sprites = currentlyAlignedSprites;
+                alignmentFlash.expiry = Date.now() + 1000; // Changed duration to 1 second
+            }
+
+            // Color update based on alignment flash
+            const isFlashing = Date.now() < alignmentFlash.expiry;
+            planets.forEach(p => {
+                if (p.data.isStar) return;
+                const isAligned = isFlashing && alignmentFlash.sprites.includes(p.sprite);
+                p.sprite.material.map = isAligned ? planetRedTexture : planetTexture;
+                p.sprite.material.color.setHex(isAligned ? 0xff0000 : 0x00ff00);
+            });
+            
+            // Camera and rendering
             camera.zoom = zoom;
             camera.updateProjectionMatrix();
-
             planets.forEach(p => {
                 const newPosition = calculatePosition(p.data, currentDate);
                 p.sprite.position.copy(newPosition);
             });
-
             dateDisplay.textContent = currentDate.toUTCString().toUpperCase();
             renderer.render(scene, camera);
         }
@@ -342,7 +370,6 @@
             if (isTimelapseRunning) {
                 const msPerDay = timelapseSpeed * 24 * 60 * 60 * 1000;
                 currentDate = new Date(currentDate.getTime() + msPerDay);
-                
                 const year = currentDate.getFullYear();
                 if (year < 1800 || year > 2100) {
                     stopTimelapse();
@@ -407,7 +434,6 @@
         
         function onSpeedChange(event) {
             const sliderValue = parseInt(event.target.value, 10);
-            // Exponential scale: 2^(value/10). Gives a range of ~0.25 to 32
             timelapseSpeed = Math.pow(2, sliderValue / 10);
         }
         
