@@ -1,0 +1,461 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Interactive 2D Solar System - Cosmo Phase</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=VT323&display=swap" rel="stylesheet">
+    <style>
+        body {
+            font-family: 'VT323', monospace;
+            overflow: hidden; /* Prevent scrollbars from appearing */
+            background-color: #000;
+        }
+        canvas {
+            display: block;
+            width: 100%;
+            height: 100%;
+            cursor: grab;
+        }
+        canvas:active {
+            cursor: grabbing;
+        }
+        /* Custom styles for the date picker to match the retro theme */
+        input[type="date"]::-webkit-calendar-picker-indicator {
+            filter: invert(1) brightness(0.5) sepia(1) saturate(5) hue-rotate(90deg); /* Green filter */
+            cursor: pointer;
+        }
+        .ui-border {
+            border: 2px solid #22c55e; /* green-500 */
+        }
+        /* Custom styles for the range slider */
+        input[type=range] {
+            -webkit-appearance: none;
+            background: transparent;
+        }
+        input[type=range]:focus {
+            outline: none;
+        }
+        input[type=range]::-webkit-slider-runnable-track {
+            width: 100%;
+            height: 4px;
+            cursor: pointer;
+            background: #22c55e;
+        }
+        input[type=range]::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            border: 2px solid #000;
+            height: 16px;
+            width: 16px;
+            background: #22c55e;
+            cursor: pointer;
+            margin-top: -6px; /* You need to specify a margin in Chrome, but in Firefox and IE it is automatic */
+        }
+    </style>
+</head>
+<body class="bg-black text-green-400 flex flex-col h-screen">
+
+    <!-- Header & Controls -->
+    <header class="p-2 md:p-4 z-10 w-full ui-border m-2">
+        <div class="container mx-auto flex flex-wrap items-center justify-between gap-4 text-lg">
+            <h1 class="text-xl md:text-2xl text-green-400">COSMO PHASE</h1>
+            <div class="flex flex-wrap items-center gap-x-6 gap-y-4">
+                <div class="flex items-center gap-2">
+                    <label for="date-picker">DATE:</label>
+                    <input type="date" id="date-picker" min="1800-01-01" max="2100-12-31" class="bg-black border border-green-500 rounded-none px-2 py-1 text-green-400 focus:outline-none focus:bg-green-900">
+                </div>
+                <button id="real-time-btn" class="bg-black hover:bg-green-900 border border-green-500 text-green-400 font-bold py-1 px-3 rounded-none transition-colors duration-300">
+                    REAL-TIME
+                </button>
+                <div class="flex items-center gap-4">
+                    <button id="timelapse-btn" class="bg-black hover:bg-green-900 border border-green-500 text-green-400 font-bold py-1 px-3 rounded-none transition-colors duration-300">
+                        START TIMELAPSE
+                    </button>
+                    <div class="flex items-center gap-2">
+                         <label for="timelapse-speed">SPEED:</label>
+                         <input type="range" id="timelapse-speed" min="-20" max="50" value="10" class="w-24">
+                    </div>
+                </div>
+            </div>
+        </div>
+    </header>
+
+    <!-- Main Content -->
+    <main class="flex-grow relative ui-border m-2 mt-0 p-1">
+        <div id="canvas-container" class="absolute inset-1"></div>
+        <div id="info-box" class="absolute top-2 left-2 bg-black/70 backdrop-blur-sm p-2 border border-green-500 text-lg font-semibold hidden shadow-xl rounded-none"></div>
+        <div class="absolute bottom-2 right-2 text-green-500 text-sm opacity-70">USE MOUSEWHEEL TO ZOOM</div>
+        
+        <!-- Moon Phase Display -->
+        <div id="moon-phase-container" class="absolute top-2 right-2 ui-border p-2 bg-black/70 backdrop-blur-sm">
+            <h2 class="text-center text-green-400">MOON</h2>
+            <svg id="moon-svg" width="80" height="80" viewBox="0 0 80 80">
+                <g id="moon-phase-display-group" fill="#22c55e"></g>
+                <circle cx="40" cy="40" r="38" stroke="#22c55e" stroke-width="2" fill="none" />
+            </svg>
+        </div>
+    </main>
+    
+    <!-- Footer with Date Display -->
+    <footer class="p-2 z-10 w-full text-center">
+        <p id="current-date-display" class="text-xl tracking-widest"></p>
+    </footer>
+
+    <script type="importmap">
+        {
+            "imports": {
+                "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+                "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+            }
+        }
+    </script>
+
+    <script type="module">
+        import * as THREE from 'three';
+
+        // --- DOM Elements ---
+        const canvasContainer = document.getElementById('canvas-container');
+        const datePicker = document.getElementById('date-picker');
+        const realTimeBtn = document.getElementById('real-time-btn');
+        const timelapseBtn = document.getElementById('timelapse-btn');
+        const timelapseSpeedSlider = document.getElementById('timelapse-speed');
+        const dateDisplay = document.getElementById('current-date-display');
+        const infoBox = document.getElementById('info-box');
+        const moonDisplayGroup = document.getElementById('moon-phase-display-group');
+
+        // --- Global State ---
+        let isRealTime = true;
+        let isTimelapseRunning = false;
+        let timelapseSpeed = 2; // Initial speed (2^(10/10) = 2)
+        let currentDate = new Date();
+        let planets = [];
+        let scene, camera, renderer, raycaster, mouse;
+        let zoom = 1.0; // Initial zoom level
+        const LOG_SCALE_FACTOR = 20;
+
+        // --- Astronomical Constants & Data (J2000 epoch) ---
+        const bodies = [
+            { name: 'SUN', color: 0xffff00, size: 19.4, isStar: true },
+            { name: 'MERCURY', color: 0x00ff00, size: 4.3, a: 0.387, e: 0.2056, L: 252.25, w: 77.46 },
+            { name: 'VENUS',   color: 0x00ff00, size: 6.5, a: 0.723, e: 0.0068, L: 181.98, w: 131.57 },
+            { name: 'EARTH',   color: 0x00ff00, size: 7.6, a: 1.000, e: 0.0167, L: 100.46, w: 102.94 },
+            { name: 'MARS',    color: 0x00ff00, size: 5.4, a: 1.524, e: 0.0934, L: 355.45, w: 336.04 },
+            { name: 'JUPITER', color: 0x00ff00, size: 16.2, a: 5.203, e: 0.0484, L: 34.40,  w: 14.75 },
+            { name: 'SATURN',  color: 0x00ff00, size: 14.0, a: 9.537, e: 0.0542, L: 49.94,  w: 92.43 },
+            { name: 'URANUS',  color: 0x00ff00, size: 11.9, a: 19.191,e: 0.0472, L: 313.23, w: 170.96 },
+            { name: 'NEPTUNE', color: 0x00ff00, size: 10.8, a: 30.069,e: 0.0086, L: 304.88, w: 44.97 },
+            { name: 'PLUTO',   color: 0x00ff00, size: 3.2, a: 39.48, e: 0.2488, L: 238.92, w: 224.07 }
+        ];
+
+        // --- Initialization ---
+        
+        function createDotTexture(size, color) {
+            const canvas = document.createElement('canvas');
+            const context = canvas.getContext('2d');
+            canvas.width = 64; canvas.height = 64;
+            const centerX = canvas.width / 2, centerY = canvas.height / 2;
+            context.beginPath();
+            context.arc(centerX, centerY, size, 0, 2 * Math.PI, false);
+            context.fillStyle = color;
+            context.fill();
+            return new THREE.CanvasTexture(canvas);
+        }
+
+        const sunTexture = createDotTexture(32, '#ffcc00');
+        const planetTexture = createDotTexture(32, '#00ff00');
+
+        function init() {
+            scene = new THREE.Scene();
+            scene.background = new THREE.Color(0x000000);
+            
+            const aspect = canvasContainer.clientWidth / canvasContainer.clientHeight;
+            camera = new THREE.OrthographicCamera(-50 * aspect, 50 * aspect, 50, -50, 0.1, 1000);
+            camera.position.set(0, 100, 0);
+            camera.lookAt(0, 0, 0);
+
+            renderer = new THREE.WebGLRenderer({ antialias: false, alpha: true });
+            renderer.setSize(canvasContainer.clientWidth, canvasContainer.clientHeight);
+            renderer.setPixelRatio(window.devicePixelRatio);
+            canvasContainer.appendChild(renderer.domElement);
+            
+            const gridHelper = new THREE.GridHelper(100, 20, 0x004400, 0x004400);
+            gridHelper.rotation.x = Math.PI / 2;
+            scene.add(gridHelper);
+
+            raycaster = new THREE.Raycaster();
+            mouse = new THREE.Vector2();
+
+            createSolarSystem();
+            setupEventListeners();
+        }
+
+        function createSolarSystem() {
+            bodies.forEach(bodyData => {
+                const isStar = bodyData.isStar;
+                const material = new THREE.SpriteMaterial({
+                    map: isStar ? sunTexture : planetTexture,
+                    color: isStar ? 0xffcc00 : 0x00ff00,
+                    transparent: true,
+                    blending: THREE.AdditiveBlending,
+                    sizeAttenuation: false
+                });
+                
+                const sprite = new THREE.Sprite(material);
+                const scale = bodyData.size / renderer.getPixelRatio() / 5;
+                sprite.scale.set(scale, scale, 1);
+                sprite.userData = bodyData;
+                scene.add(sprite);
+
+                const planetObject = { sprite, data: bodyData };
+                
+                if (!isStar) {
+                    planetObject.orbit = createOrbit(bodyData);
+                    scene.add(planetObject.orbit);
+                }
+                planets.push(planetObject);
+            });
+        }
+        
+        /**
+         * Creates an accurate elliptical orbit by calculating points along the path.
+         * This ensures the planet's position perfectly matches the drawn orbit.
+         */
+        function createOrbit(bodyData) {
+            const points = [];
+            const numPoints = 256;
+            for (let i = 0; i <= numPoints; i++) {
+                const M = (i / numPoints) * 2 * Math.PI; // Mean anomaly from 0 to 2PI
+                const pos = getPositionOnOrbit(bodyData, M);
+                points.push(pos);
+            }
+
+            const geometry = new THREE.BufferGeometry().setFromPoints(points);
+            const material = new THREE.LineDashedMaterial({ color: 0x00ff00, linewidth: 1, scale: 1, dashSize: 0.2, gapSize: 0.2, transparent: true, opacity: 0.3 });
+            
+            const ellipse = new THREE.Line(geometry, material);
+            ellipse.computeLineDistances();
+            return ellipse;
+        }
+
+        /**
+         * Helper function to get a single position on an orbit for a given Mean Anomaly.
+         * Used by both createOrbit and calculatePosition.
+         */
+        function getPositionOnOrbit(bodyData, M_rad) {
+            const { a, e, w } = bodyData;
+            const w_rad = w * (Math.PI / 180);
+
+            // Solve Kepler's Equation for Eccentric Anomaly (E)
+            let E = M_rad;
+            for (let i = 0; i < 7; i++) {
+                E = M_rad + e * Math.sin(E);
+            }
+
+            // Get scaled radii for drawing
+            const a_scaled = Math.log10(a + 1) * LOG_SCALE_FACTOR;
+            const b_scaled = a_scaled * Math.sqrt(1 - e * e);
+            const c_scaled = a_scaled * e;
+
+            // Calculate coordinates on a non-rotated ellipse with sun at origin
+            const x_unrotated = a_scaled * Math.cos(E) - c_scaled;
+            const z_unrotated = b_scaled * Math.sin(E);
+
+            // Rotate these coordinates by the longitude of perihelion (w)
+            const x = x_unrotated * Math.cos(w_rad) - z_unrotated * Math.sin(w_rad);
+            const z = x_unrotated * Math.sin(w_rad) + z_unrotated * Math.cos(w_rad);
+
+            // Return the 3D vector for the XZ plane.
+            return new THREE.Vector3(x, 0, z);
+        }
+
+
+        // --- Main Loop and Calculations ---
+        function calculatePosition(bodyData, date) {
+            if (bodyData.isStar) return new THREE.Vector3(0, 0, 0);
+
+            const { a, L, w } = bodyData;
+
+            // Calculate Mean Anomaly (M) for the given date
+            const d = (date - new Date('2000-01-01T12:00:00Z')) / (1000 * 60 * 60 * 24);
+            const n_deg_per_day = 360 / ((a ** 1.5) * 365.25);
+            const M0_deg = L - w;
+            const M_deg = (M0_deg + n_deg_per_day * d) % 360;
+            let M = M_deg * (Math.PI / 180);
+            M = M < 0 ? M + 2 * Math.PI : M;
+
+            return getPositionOnOrbit(bodyData, M);
+        }
+
+        const LUNAR_MONTH = 29.530588853;
+        const NEW_MOON_2000 = new Date('2000-01-06T18:14:00Z');
+        function calculateMoonPhase(date) {
+            const diff = (date - NEW_MOON_2000) / (1000 * 60 * 60 * 24);
+            let phase = (diff / LUNAR_MONTH) % 1;
+            return phase < 0 ? phase + 1 : phase;
+        }
+
+        function updateMoonPhaseDisplay(date) {
+            const phase = calculateMoonPhase(date);
+            moonDisplayGroup.innerHTML = ''; // Clear previous frame
+        
+            const r = 38; // radius
+            const cx = 40; // center x
+            const cy = 40; // center y
+        
+            const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+            let d;
+        
+            const x_radius = r * Math.cos(phase * 2 * Math.PI);
+        
+            if (phase < 0.5) { // Waxing (light on right)
+                // Draw right half-circle, then the terminator ellipse
+                d = `M ${cx},${cy - r} A ${r},${r} 0 0 1 ${cx},${cy + r} A ${Math.abs(x_radius)},${r} 0 0 0 ${cx},${cy - r}`;
+            } else { // Waning (light on left)
+                // Draw left half-circle, then the terminator ellipse
+                d = `M ${cx},${cy - r} A ${r},${r} 0 0 0 ${cx},${cy + r} A ${Math.abs(x_radius)},${r} 0 0 1 ${cx},${cy - r}`;
+            }
+        
+            path.setAttribute('d', d + ' Z');
+            moonDisplayGroup.appendChild(path);
+        }
+
+        function animate() {
+            requestAnimationFrame(animate);
+
+            updateDate();
+            updateMoonPhaseDisplay(currentDate);
+
+            camera.zoom = zoom;
+            camera.updateProjectionMatrix();
+
+            planets.forEach(p => {
+                const newPosition = calculatePosition(p.data, currentDate);
+                p.sprite.position.copy(newPosition);
+            });
+
+            dateDisplay.textContent = currentDate.toUTCString().toUpperCase();
+            renderer.render(scene, camera);
+        }
+
+        function updateDate() {
+            if (isTimelapseRunning) {
+                const msPerDay = timelapseSpeed * 24 * 60 * 60 * 1000;
+                currentDate = new Date(currentDate.getTime() + msPerDay);
+                
+                const year = currentDate.getFullYear();
+                if (year < 1800 || year > 2100) {
+                    stopTimelapse();
+                    currentDate = new Date(Math.max(new Date('1800-01-01T12:00:00Z'), Math.min(currentDate, new Date('2100-12-31T12:00:00Z'))));
+                }
+                updateDatePicker(currentDate);
+            } else if (isRealTime) {
+                currentDate = new Date();
+                updateDatePicker(currentDate);
+            }
+        }
+        
+        function updateDatePicker(date) {
+            if(document.activeElement !== datePicker) {
+                 const year = date.getFullYear();
+                 const mm = String(date.getMonth() + 1).padStart(2, '0');
+                 const dd = String(date.getDate()).padStart(2, '0');
+                 datePicker.value = `${year}-${mm}-${dd}`;
+            }
+        }
+
+        // --- Event Handling ---
+        function setupEventListeners() {
+            window.addEventListener('resize', onWindowResize, false);
+            canvasContainer.addEventListener('mousemove', onMouseMove, false);
+            canvasContainer.addEventListener('wheel', onMouseWheel, { passive: false });
+            datePicker.addEventListener('change', onDateChange);
+            realTimeBtn.addEventListener('click', onRealTimeClick);
+            timelapseBtn.addEventListener('click', onTimelapseClick);
+            timelapseSpeedSlider.addEventListener('input', onSpeedChange);
+        }
+
+        function onWindowResize() {
+            const aspect = canvasContainer.clientWidth / canvasContainer.clientHeight;
+            camera.left = -50 * aspect; camera.right = 50 * aspect;
+            camera.top = 50; camera.bottom = -50;
+            camera.updateProjectionMatrix();
+            renderer.setSize(canvasContainer.clientWidth, canvasContainer.clientHeight);
+        }
+        
+        function onDateChange(event) {
+            const dateValue = event.target.value;
+            if (dateValue) {
+                stopTimelapse();
+                isRealTime = false;
+                currentDate = new Date(dateValue + 'T12:00:00Z');
+            }
+        }
+
+        function onRealTimeClick() {
+            stopTimelapse();
+            isRealTime = true;
+        }
+        
+        function onTimelapseClick() {
+            if (isTimelapseRunning) {
+                stopTimelapse();
+            } else {
+                startTimelapse();
+            }
+        }
+        
+        function onSpeedChange(event) {
+            const sliderValue = parseInt(event.target.value, 10);
+            // Exponential scale: 2^(value/10). Gives a range of ~0.25 to 32
+            timelapseSpeed = Math.pow(2, sliderValue / 10);
+        }
+        
+        function startTimelapse() {
+            isTimelapseRunning = true;
+            isRealTime = false;
+            timelapseBtn.textContent = 'STOP TIMELAPSE';
+            timelapseBtn.classList.add('bg-green-900');
+        }
+
+        function stopTimelapse() {
+            isTimelapseRunning = false;
+            timelapseBtn.textContent = 'START TIMELAPSE';
+            timelapseBtn.classList.remove('bg-green-900');
+        }
+
+        function onMouseWheel(event) {
+            event.preventDefault();
+            zoom -= event.deltaY * 0.001;
+            zoom = Math.max(0.2, Math.min(zoom, 10.0));
+        }
+
+        function onMouseMove(event) {
+            const rect = renderer.domElement.getBoundingClientRect();
+            mouse.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
+            mouse.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
+            
+            raycaster.setFromCamera(mouse, camera);
+            
+            const intersects = raycaster.intersectObjects(planets.map(p => p.sprite));
+
+            if (intersects.length > 0) {
+                const intersectedObject = intersects[0].object;
+                infoBox.textContent = intersectedObject.userData.name;
+                infoBox.style.display = 'block';
+                infoBox.style.left = `${event.clientX - rect.left + 20}px`;
+                infoBox.style.top = `${event.clientY - rect.top + 20}px`;
+                document.body.style.cursor = 'pointer';
+            } else {
+                infoBox.style.display = 'none';
+                document.body.style.cursor = 'grab';
+            }
+        }
+
+        // --- Start Application ---
+        init();
+        animate();
+    </script>
+
+</body>
+</html>
