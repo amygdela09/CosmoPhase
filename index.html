@@ -32,7 +32,9 @@
         /* Custom styles for the range slider */
         input[type=range] {
             -webkit-appearance: none;
-            background: transparent;
+            background: #22c55e; /* Green track background */
+            height: 4px;
+            outline: none;
         }
         input[type=range]:focus {
             outline: none;
@@ -41,7 +43,7 @@
             width: 100%;
             height: 4px;
             cursor: pointer;
-            background: #22c55e;
+            background: #22c55e; /* Green track */
         }
         input[type=range]::-webkit-slider-thumb {
             -webkit-appearance: none;
@@ -50,7 +52,24 @@
             width: 16px;
             background: #22c55e;
             cursor: pointer;
-            margin-top: -6px; /* You need to specify a margin in Chrome, but in Firefox and IE it is automatic */
+            margin-top: -6px;
+            border-radius: 0; /* Square thumb */
+        }
+        /* Firefox styles */
+        input[type=range]::-moz-range-track {
+            width: 100%;
+            height: 4px;
+            cursor: pointer;
+            background: #22c55e; /* Green track */
+            border: none;
+        }
+        input[type=range]::-moz-range-thumb {
+            border: 2px solid #000;
+            height: 12px;
+            width: 12px;
+            background: #22c55e;
+            cursor: pointer;
+            border-radius: 0; /* Square thumb */
         }
     </style>
 </head>
