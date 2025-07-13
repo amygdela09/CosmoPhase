@@ -4,6 +4,11 @@ Cosmo Phase: A Retro Solar System Simulator
 This project is a web-based, interactive 2D model of our solar system, created as a tribute to the iconic Casio Cosmo Phase watch. It combines a nostalgic, retro-futuristic aesthetic with accurate orbital mechanics to provide a beautiful and educational view of our celestial neighborhood.
 
 The entire interface is designed to evoke the feeling of a classic 80s digital watch, featuring a monochrome green-on-black color scheme, blocky UI elements, and pixelated sprites for the sun and planets.
+
+Live Demo
+
+https://amygdela09.github.io/CosmoPhase/
+
 Key Features:
 
     Accurate Orbital Simulation: Planet positions are not just for show. They are calculated using true Keplerian orbital elements, including semi-major axis, eccentricity, and longitude of perihelion. This means planets follow their correct elliptical paths and vary their speed—moving faster at perihelion (closest to the sun) and slower at aphelion (farthest away).
