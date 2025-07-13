@@ -26,12 +26,12 @@ Technology Stack:
 
     Frontend: Plain HTML
 
-license:
-
-    MIT License. Check the LICENSE file for details.
-
     Styling: Tailwind CSS
 
     Rendering & Animation: Three.js for WebGL rendering
 
 This project was built to be a beautiful, interactive piece of digital art that doubles as a fun educational tool.
+
+license:
+
+    MIT License. Check the LICENSE file for details.
