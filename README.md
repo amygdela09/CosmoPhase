@@ -26,6 +26,10 @@ Technology Stack:
 
     Frontend: Plain HTML
 
+license:
+
+    MIT License. Check the LICENSE file for details.
+
     Styling: Tailwind CSS
 
     Rendering & Animation: Three.js for WebGL rendering
